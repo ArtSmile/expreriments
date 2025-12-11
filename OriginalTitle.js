@@ -1,5 +1,5 @@
 (function () {
-  //BDVBurik 2024 (Modified alignment)
+  //BDVBurik 2024 (Minimalist Style)
   "use strict";
 
   async function titleOrigin(card) {
@@ -54,21 +54,26 @@
         var render = Lampa.Activity.active().activity.render();
 
         if (Lampa.Storage.get("language") != "ru") {
-          ru =
-            "<div style='font-size: 1.3em; height: auto;'>Ru:" +
-            etRuTitle +
-            "</div >";
+          // Убрал лишние стили у RU, чтобы они наследовались от родителя
+          ru = "<div>Ru: " + etRuTitle + "</div>";
         } else ru = "";
       }
+      
       $(".original_title", render)
         .find("> div")
         .eq(0)
         .after(
-          `<div id='titleen'><div><div style='font-size: 1.3em; height: auto; '>En: 
-              ${data} </div>${ru}
-              <div style='font-size: 1.3em; height: auto; '> Orig: 
-                ${card.original_title || card.original_name} 
-              </div></div></div>`
+          // ИЗМЕНЕНИЯ ЗДЕСЬ:
+          // 1. margin-bottom: 0.6em (отступ снизу)
+          // 2. font-size: 0.9em (шрифт меньше)
+          // 3. color: #a5a5a5 (светло-серый цвет)
+          // 4. Убрано "En:" и блок с Orig
+          `<div id='titleen' style='margin-bottom: 0.6em;'>
+              <div style='font-size: 0.9em; color: #a5a5a5; line-height: 1.2;'>
+                  ${data} 
+                  ${ru}
+              </div>
+           </div>`
         );
     }
   }
@@ -79,9 +84,9 @@
       if (e.type == "complite") {
         var render = e.object.activity.render();
         $(".original_title", render).remove();
-        // ИЗМЕНЕНИЕ ЗДЕСЬ: text-align заменен с right на left
+        // text-align: left остался, как мы и договаривались
         $(".full-start-new__title", render).after(
-          '<div class="original_title" style="  margin-top:-0.8em ; text-align: left;"><div>'
+          '<div class="original_title" style="margin-top:-0.8em; text-align: left;"><div>'
         );
         titleOrigin(e.data.movie);
         $(".full-start-new__rate-line").css("margin-bottom", "0.8em");

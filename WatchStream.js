@@ -5,22 +5,23 @@
         var _this = this;
 
         this.init = function () {
-            // Используем try-catch, чтобы ошибка здесь не положила всю Лампу
-            try {
-                Lampa.Listener.follow('full', function (e) {
-                    if (e.type == 'complite') {
-                        _this.addButton(e.data, e.object);
-                    }
-                });
-            } catch (error) {
-                console.error('FlcksbrPlugin: Ошибка при инициализации', error);
-            }
+            // Подписываемся на событие открытия карточки
+            Lampa.Listener.follow('full', function (e) {
+                if (e.type == 'complite') {
+                    // Передаем данные. Сам object нам больше не нужен для поиска DOM,
+                    // но передадим на всякий случай.
+                    _this.addButton(e.data);
+                }
+            });
         };
 
-        this.addButton = function (data, object) {
+        this.addButton = function (data) {
             try {
-                // Логируем начало работы функции
-                console.log('FlcksbrPlugin: Попытка добавить кнопку для', data.movie.title);
+                // Ищем активную открытую карточку фильма по глобальному классу
+                var fullPage = $('.full-start'); 
+
+                // Если карточка почему-то не найдена, выходим, чтобы не было ошибок
+                if (fullPage.length === 0) return;
 
                 var movie = data.movie;
                 var kp_id = (movie.kinopoisk_id || movie.kp_id || (movie.ids && movie.ids.kp) || null);
@@ -30,7 +31,7 @@
                 var icon_load = '<div class="broadcast__scan"><div></div></div>';
                 var is_searching = false;
 
-                // Обработчик нажатия
+                // --- ЛОГИКА НАЖАТИЯ ---
                 btn.on('hover:enter click', function () {
                     if (kp_id) {
                         _this.findStream(kp_id, movie.title);
@@ -42,27 +43,23 @@
                 });
 
                 // --- ВСТАВКА КНОПКИ ---
-                // Ищем панель действий. 
-                var action_panel = object.find('.view--action');
+                // Ищем панель кнопок ВНУТРИ найденной страницы
+                var action_panel = fullPage.find('.view--action');
                 
-                // Если панели actions нет, ищем buttons (для мобильных версий)
+                // Если панели actions нет (мобилка), ищем buttons
                 if (action_panel.length === 0) {
-                    action_panel = object.find('.view--buttons');
+                    action_panel = fullPage.find('.view--buttons');
                 }
 
+                // Вставляем кнопку
                 if (action_panel.length > 0) {
-                    // append добавляет В КОНЕЦ. prepend - В НАЧАЛО.
-                    // Если MODS затирает кнопки, попробуем встать первыми (prepend)
-                    // или просто добавить в конец (append).
-                    action_panel.first().append(btn);
-                    console.log('FlcksbrPlugin: Кнопка успешно добавлена в DOM');
-                } else {
-                    console.error('FlcksbrPlugin: Не найдена панель для кнопок (.view--action или .view--buttons)');
+                    // Используем prepend, чтобы встать ПЕРВОЙ кнопкой (до трейлера и MODS)
+                    // Это поможет увидеть её сразу
+                    action_panel.first().prepend(btn);
                 }
 
-                // --- ПОИСК ID (ФОНОВЫЙ) ---
+                // --- ПОИСК ID (ЕСЛИ НЕТ) ---
                 if (!kp_id) {
-                    console.log('FlcksbrPlugin: ID нет, начинаем поиск...');
                     is_searching = true;
                     btn.append(icon_load);
                     
@@ -72,22 +69,19 @@
                         
                         if (foundId) {
                             kp_id = foundId;
-                            console.log('FlcksbrPlugin: ID найден:', foundId);
-                            // Можно визуально моргнуть кнопкой, что она активна
-                            btn.css('color', '#4bffa5'); // Сделать текст зеленоватым
+                            // Делаем текст зеленым, чтобы показать успех
+                            btn.css('color', '#80ffb0'); 
                         } else {
-                            console.log('FlcksbrPlugin: ID найти не удалось');
                             btn.css('opacity', '0.5');
                         }
                     });
                 }
             } catch (error) {
-                console.error('FlcksbrPlugin: Критическая ошибка в addButton', error);
+                console.error('FlcksbrPlugin: Ошибка в addButton', error);
             }
         };
 
         this.findKpIdRemote = function(movie, callback) {
-            // Токен для Alloha
             var token = '04941a9a3ca3ac16e2b4327347bbc1'; 
             var url = 'https://api.alloha.tv/?token=' + token;
 
@@ -99,7 +93,6 @@
                 return;
             }
 
-            // Используем network.silent напрямую, без создания экземпляра класса
             Lampa.Network.silent(url, function(json) {
                 if (json && json.data && json.data.id_kp) {
                     callback(json.data.id_kp);
@@ -128,9 +121,7 @@
                     Lampa.Player.play({ url: streamUrl, title: title });
                     Lampa.History.add(streamUrl, { title: title });
                 } else {
-                    Lampa.Noty.show('Поток не найден (защита или iframe)');
-                    // Опция: открыть в браузере, если не нашли поток
-                    // Lampa.Platform.openWindow(targetUrl);
+                    Lampa.Noty.show('Поток не найден (защита сайта)');
                 }
             }, function (a, c) {
                 Lampa.Loading.stop();

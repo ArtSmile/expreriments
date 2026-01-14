@@ -15,6 +15,17 @@
             'now': 'new_this_year'
         };
 
+        var extra_sections = {
+            'persons': 'Подборки по актёрам',
+            'keywords': 'Подборки по темам',
+            'genres': 'Подборки по жанрам'
+        };
+
+        var inject_sections = {
+            'book': 'Избранное',
+            'history': 'История просмотров'
+        };
+
         // Initialize Settings
         this.init = function () {
             Lampa.SettingsApi.addComponent({
@@ -45,6 +56,7 @@
                 'now': 'Новинки этого года'
             };
 
+            // Main Sections
             for (var key in sections) {
                 (function (k) {
                     var title = translations[k] || k;
@@ -90,6 +102,79 @@
                     });
                 })(key);
             }
+
+            // Extra Sections
+            Lampa.SettingsApi.addParam({
+                component: 'cub_dashboard',
+                param: {
+                    name: 'cub_dash_title_extra',
+                    type: 'title'
+                },
+                field: {
+                    name: 'Тематические подборки'
+                }
+            });
+
+            for (var key in extra_sections) {
+                (function (k) {
+                    Lampa.SettingsApi.addParam({
+                        component: 'cub_dashboard',
+                        param: {
+                            name: 'cub_dash_show_' + k,
+                            type: 'trigger',
+                            default: true
+                        },
+                        field: {
+                            name: extra_sections[k]
+                        }
+                    });
+                })(key);
+            }
+
+            // Injected Sections
+            Lampa.SettingsApi.addParam({
+                component: 'cub_dashboard',
+                param: {
+                    name: 'cub_dash_title_inject',
+                    type: 'title'
+                },
+                field: {
+                    name: 'Специальные разделы'
+                }
+            });
+
+            for (var key in inject_sections) {
+                (function (k) {
+                    Lampa.SettingsApi.addParam({
+                        component: 'cub_dashboard',
+                        param: {
+                            name: 'cub_dash_show_' + k,
+                            type: 'trigger',
+                            default: false
+                        },
+                        field: {
+                            name: inject_sections[k] // 'Избранное' or 'История просмотров'
+                        }
+                    });
+
+                    Lampa.SettingsApi.addParam({
+                        component: 'cub_dashboard',
+                        param: {
+                            name: 'cub_dash_style_' + k,
+                            type: 'select',
+                            values: {
+                                'std': 'Горизонтальные (обычные)',
+                                'wide': 'Горизонтальные (большие)',
+                                'vert': 'Вертикальные'
+                            },
+                            default: 'std'
+                        },
+                        field: {
+                            name: 'Стиль карточек'
+                        }
+                    });
+                })(key);
+            }
         };
 
         // Intercept ContentRows
@@ -98,230 +183,164 @@
 
             Lampa.ContentRows.call = function (name, params, callbacks) {
                 if (name === 'main' && params.source === 'cub') {
-                    // Wrap callbacks to modify them
+                    // Inject extra rows first
+                    var injections = [];
+                    for (var key in inject_sections) {
+                        if (Lampa.Storage.get('cub_dash_show_' + key, false)) {
+                            injections.push(createInjectedRow(key));
+                        }
+                    }
+
+                    if (injections.length) {
+                        for (var i = injections.length - 1; i >= 0; i--) {
+                            callbacks.unshift(injections[i]);
+                        }
+                    }
+
                     var wrappedCallbacks = callbacks.map(function (cb) {
-                        return function (result) {
-                            if (!result) return cb(result);
+                        if (cb.isInjectedRow) {
+                            return cb;
+                        }
 
-                            // Try to identify the section using the result URL or other properties
-                            // Note: raw result might not have URL if it came from cache without it, but usually it does.
-                            // If it's a function (lazy load), we need to wrap the internal call?
-                            // No, ContentRows.call expects an array of functions usually, which call 'call(json)'
+                        var originalRowGenerator = cb;
 
-                            // Wait, callbacks passed to ContentRows.call are the row GENERATORS (functions).
-                            // We need to wrap them so when they are executed, we intercept the data they produce.
+                        return function (call) {
+                            originalRowGenerator(function (json) {
+                                if (!json) return call(json);
 
-                            // Actually, ContentRows.call takes (screen, params, parts_data).
-                            // parts_data is the array of functions.
+                                var urlInfo = json.url || '';
+                                var sectionKey = null;
 
-                            // So 'callbacks' here IS 'parts_data'.
+                                for (var key in sections) {
+                                    if (urlInfo.indexOf(key) !== -1) {
+                                        sectionKey = key;
+                                        break;
+                                    }
+                                }
 
-                            var originalRowGenerator = cb;
+                                if (urlInfo.indexOf('sort=now') !== -1 && urlInfo.indexOf('sort=now_playing') === -1) {
+                                    sectionKey = 'now';
+                                }
+                                if (urlInfo.indexOf('collections/') !== -1 && urlInfo.indexOf('collections/list') === -1) {
+                                    sectionKey = 'collections/list';
+                                }
 
-                            return function (done) {
-                                originalRowGenerator(function (json) {
-                                    if (!json) return done(json);
-
-                                    var urlInfo = json.url || '';
-                                    var sectionKey = null;
-
-                                    for (var key in sections) {
-                                        if (urlInfo.indexOf(key) !== -1) {
-                                            sectionKey = key;
-                                            break;
+                                // Extra Sections
+                                if (urlInfo.indexOf('person/popular') !== -1 || (json.title && json.params && json.params.module)) {
+                                    // Check for person icon heuristic if we want to be sure
+                                    if (json.icon_img && json.icon_img.indexOf('profile_path') === -1) {
+                                        if (!sectionKey) {
+                                            sectionKey = 'persons';
                                         }
                                     }
+                                }
 
-                                    // Special case for 'now' (filtering year) vs 'now_playing'
-                                    if (urlInfo.indexOf('sort=now') !== -1 && urlInfo.indexOf('sort=now_playing') === -1) {
-                                        sectionKey = 'now';
+                                if (urlInfo.indexOf('discover/movie') !== -1 || urlInfo.indexOf('discover/tv') !== -1) {
+                                    if (urlInfo.indexOf('with_keywords') !== -1) {
+                                        sectionKey = 'keywords';
+                                    }
+                                    if (urlInfo.indexOf('with_genres') !== -1) {
+                                        sectionKey = 'genres';
+                                    }
+                                }
+                                if (urlInfo.indexOf('genre=') !== -1 && !sectionKey) {
+                                    sectionKey = 'genres';
+                                }
+
+                                if (sectionKey) {
+                                    var show = Lampa.Storage.get('cub_dash_show_' + sectionKey, true);
+                                    var style = Lampa.Storage.get('cub_dash_style_' + sectionKey, 'std');
+
+                                    if (!show) {
+                                        return call(null);
                                     }
 
+                                    applyStyle(json, style);
+                                }
 
-                                    if (sectionKey) {
-                                        var show = Lampa.Storage.get('cub_dash_show_' + sectionKey, true);
-                                        var style = Lampa.Storage.get('cub_dash_style_' + sectionKey, 'std');
-
-                                        if (!show) {
-                                            // Determine if we should count this as empty or just skip.
-                                            // The caller usually expects a result. If we return null/empty, it might load next page.
-                                            // But for main page rows, it just renders what comes back.
-                                            return done(null);
-                                        }
-
-                                        if (style === 'wide') {
-                                            if (!json.params) json.params = {};
-                                            if (!json.params.style) json.params.style = {};
-                                            json.params.style.name = 'wide';
-
-                                            // Usually wide needs specific item rendering
-                                            if (!json.params.items) json.params.items = {};
-                                            json.params.items.view = 3;
-
-                                            // Force wide style on results if needed
-                                            if (json.results) {
-                                                json.results.forEach(function (card) {
-                                                    if (!card.params) card.params = {};
-                                                    if (!card.params.style) card.params.style = {};
-                                                    card.params.style.name = 'wide';
-                                                });
-                                            }
-                                        } else if (style === 'vert') {
-                                            // Vertical usually means removing 'wide' style and maybe setting view count
-                                            if (json.params && json.params.style) delete json.params.style.name;
-                                            if (json.results) {
-                                                json.results.forEach(function (card) {
-                                                    if (card.params && card.params.style) delete card.params.style.name;
-                                                });
-                                            }
-                                            if (!json.params) json.params = {};
-                                            if (!json.params.items) json.params.items = {};
-                                            json.params.items.view = 5;
-                                        } else {
-                                            // Standard (reset)
-                                            if (json.params && json.params.style && json.params.style.name === 'wide') delete json.params.style.name;
-                                            if (json.results) {
-                                                json.results.forEach(function (card) {
-                                                    if (card.params && card.params.style && card.params.style.name === 'wide') delete card.params.style.name;
-                                                });
-                                            }
-                                        }
-                                    }
-
-                                    done(json);
-                                });
-                            };
+                                call(json);
+                            });
                         };
                     });
 
-                    // We modify the array in place or return?
-                    // ContentRows.call implementation in source:
-                    // rows.filter(...).forEach((row)=>{ let result = row.call(params, screen); ... Arrays.insert(calls, ..., result) })
-                    // Wait, ContentRows.call is called BY the page component (e.g. cub.js).
-                    // Arguments are: call(screen, params, calls)
-                    // 'calls' is the array that will be populated or IS populated?
-
-                    // Looking at cub.js: ContentRows.call('main', params, parts_data)
-                    // parts_data is passed AS the third argument 'calls'.
-                    // ContentRows.call inserts EXTRA rows into 'calls'.
-                    // It does NOT execute the rows.
-
-                    // EXCEPT:
-                    // The standard ContentRows.call (as seen in source) modifies the 'calls' array by adding extensions.
-
-                    // BUT Lampa.ContentRows.call is also used to EXECUTE the rows? No, cub.js executes them via Api.partNext logic later.
-
-                    // So, if I want to intercept the rows defined in CUB.js, I need to modify the 'calls' array passed to ContentRows.call before it returns or during the call.
-                    // But 'calls' is passed by reference.
-
-                    // Wait, the rows in `parts_data` (passed as `calls`) are the functions I want to wrap.
-                    // The `calls` array contains the original CUB functions.
-                    // So I can iterate over `calls` (aka `callbacks` in my patch) and replace them!
-
-                    // Yes. `callbacks` is the `parts_data` array from cub.js.
-
                     for (var i = 0; i < callbacks.length; i++) {
-                        var originalFunc = callbacks[i];
-
-                        // Create a closure to capture originalFunc
-                        (function (orig, index) {
-                            callbacks[index] = function (call) {
-                                // execute original
-                                orig(function (json) {
-                                    // Intercept result
-                                    if (!json) return call(json);
-
-                                    var urlInfo = json.url || '';
-                                    // console.log('CUB Plugin Intercept:', urlInfo, json);
-
-                                    var sectionKey = null;
-
-                                    for (var key in sections) {
-                                        if (urlInfo.indexOf(key) !== -1) {
-                                            sectionKey = key;
-                                            break;
-                                        }
-                                    }
-
-                                    // Special detection for 'now' vs 'now_playing'
-                                    if (urlInfo.indexOf('sort=now') !== -1 && urlInfo.indexOf('sort=now_playing') === -1) {
-                                        sectionKey = 'now';
-                                    }
-
-                                    // Special detection for Collection (url is like collections/123)
-                                    if (urlInfo.indexOf('collections/') !== -1 && urlInfo.indexOf('collections/list') === -1) {
-                                        // The list call itself isn't a row, but the items in it are.
-                                        // In cub.js: 
-                                        // network.silent(... collections/list ..., (data)=>{ data.results.forEach ... parts_data.push(event) })
-                                        // The individual events have url 'collections/' + id
-                                        sectionKey = 'collections/list'; // Use the generic key
-                                    }
-
-
-                                    if (sectionKey) {
-                                        var show = Lampa.Storage.get('cub_dash_show_' + sectionKey, true);
-                                        var style = Lampa.Storage.get('cub_dash_style_' + sectionKey, 'std');
-
-                                        if (!show) {
-                                            // Skipping
-                                            return call(null);
-                                        }
-
-                                        // Apply styles
-                                        if (style === 'wide') {
-                                            if (!json.params) json.params = {};
-                                            if (!json.params.style) json.params.style = {};
-                                            json.params.style.name = 'wide';
-
-                                            if (!json.params.items) json.params.items = {};
-                                            json.params.items.view = 3;
-
-                                            if (json.results) {
-                                                json.results.forEach(function (card) {
-                                                    if (!card.params) card.params = {};
-                                                    if (!card.params.style) card.params.style = {};
-                                                    card.params.style.name = 'wide';
-                                                });
-                                            }
-                                        } else if (style === 'vert') {
-                                            if (json.params && json.params.style && json.params.style.name === 'wide') delete json.params.style.name;
-                                            if (json.results) {
-                                                json.results.forEach(function (card) {
-                                                    if (card.params && card.params.style && card.params.style.name === 'wide') delete card.params.style.name;
-                                                });
-                                            }
-                                            if (!json.params) json.params = {};
-                                            if (!json.params.items) json.params.items = {};
-                                            json.params.items.view = 5;
-                                        } else {
-                                            // Standard
-                                            if (json.params && json.params.style && json.params.style.name === 'wide') delete json.params.style.name;
-                                            if (json.results) {
-                                                json.results.forEach(function (card) {
-                                                    if (card.params && card.params.style && card.params.style.name === 'wide') delete card.params.style.name;
-                                                });
-                                            }
-                                        }
-                                    }
-
-                                    call(json);
-                                });
-                            };
-                        })(originalFunc, i);
+                        callbacks[i] = wrappedCallbacks[i];
                     }
                 }
 
                 return originalCall.apply(this, arguments);
             };
         };
+
+        function createInjectedRow(type) {
+            var func = function (call) {
+                var results = [];
+                if (type === 'book') results = Lampa.Favorite.get({ type: 'book' });
+                if (type === 'history') results = Lampa.Favorite.get({ type: 'history' });
+
+                if (results.length > 20) results = results.slice(0, 20);
+
+                if (results.length === 0) return call(null);
+
+                var title = inject_sections[type];
+
+                var json = {
+                    title: title,
+                    results: results,
+                    url: 'injected_' + type
+                };
+
+                var style = Lampa.Storage.get('cub_dash_style_' + type, 'std');
+                applyStyle(json, style);
+
+                call(json);
+            };
+            func.isInjectedRow = true;
+            return func;
+        }
+
+        function applyStyle(json, style) {
+            if (style === 'wide') {
+                if (!json.params) json.params = {};
+                if (!json.params.style) json.params.style = {};
+                json.params.style.name = 'wide';
+
+                if (!json.params.items) json.params.items = {};
+                json.params.items.view = 3;
+
+                if (json.results) {
+                    json.results.forEach(function (card) {
+                        if (!card.params) card.params = {};
+                        if (!card.params.style) card.params.style = {};
+                        card.params.style.name = 'wide';
+                    });
+                }
+            } else if (style === 'vert') {
+                if (json.params && json.params.style && json.params.style.name === 'wide') delete json.params.style.name;
+                if (json.results) {
+                    json.results.forEach(function (card) {
+                        if (card.params && card.params.style && card.params.style.name === 'wide') delete card.params.style.name;
+                    });
+                }
+                if (!json.params) json.params = {};
+                if (!json.params.items) json.params.items = {};
+                json.params.items.view = 5;
+            } else {
+                if (json.params && json.params.style && json.params.style.name === 'wide') delete json.params.style.name;
+                if (json.results) {
+                    json.results.forEach(function (card) {
+                        if (card.params && card.params.style && card.params.style.name === 'wide') delete card.params.style.name;
+                    });
+                }
+            }
+        }
     }
 
     if (window.Lampa) {
         new CUB_Dashboard_Settings().init();
     } else {
-        // Fallback or wait for Lampa?
-        // Usually plugins are loaded after Lampa is ready or during init.
-        // We can just rely on the script being executed after app.js
+
     }
 
 })();
+

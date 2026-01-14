@@ -52,13 +52,23 @@
                     Lampa.SettingsApi.addParam({
                         component: 'cub_dashboard',
                         param: {
+                            name: 'cub_dash_title_' + k,
+                            type: 'title'
+                        },
+                        field: {
+                            name: title
+                        }
+                    });
+
+                    Lampa.SettingsApi.addParam({
+                        component: 'cub_dashboard',
+                        param: {
                             name: 'cub_dash_show_' + k,
                             type: 'trigger',
                             default: true
                         },
                         field: {
-                            name: title,
-                            description: 'Отображать этот раздел'
+                            name: 'Отображать'
                         }
                     });
 
@@ -75,7 +85,7 @@
                             default: 'std'
                         },
                         field: {
-                            name: 'Стиль карточек для ' + title
+                            name: 'Стиль карточек'
                         }
                     });
                 })(key);

@@ -1,5 +1,4 @@
 
-
 (function () {
     'use strict';
 
@@ -41,7 +40,9 @@
                 }
             });
 
+
             this.interceptContentRows();
+            this.monkeyPatchApi();
         };
 
         // Render Settings Panel
@@ -178,7 +179,8 @@
             }
         };
 
-        // Intercept ContentRows
+
+        // Intercept ContentRows (Only for Injection)
         this.interceptContentRows = function () {
             var originalCall = Lampa.ContentRows.call;
 
@@ -197,80 +199,98 @@
                             callbacks.unshift(injections[i]);
                         }
                     }
-
-                    var wrappedCallbacks = callbacks.map(function (cb) {
-                        if (cb.isInjectedRow) {
-                            return cb;
-                        }
-
-                        var originalRowGenerator = cb;
-
-                        return function (call) {
-                            originalRowGenerator(function (json) {
-                                if (!json) return call(json);
-
-                                var urlInfo = json.url || '';
-                                var sectionKey = null;
-
-                                for (var key in sections) {
-                                    if (urlInfo.indexOf(key) !== -1) {
-                                        sectionKey = key;
-                                        break;
-                                    }
-                                }
-
-                                if (urlInfo.indexOf('sort=now') !== -1 && urlInfo.indexOf('sort=now_playing') === -1) {
-                                    sectionKey = 'now';
-                                }
-                                if (urlInfo.indexOf('collections/') !== -1 && urlInfo.indexOf('collections/list') === -1) {
-                                    sectionKey = 'collections/list';
-                                }
-
-                                // Extra Sections
-                                if (urlInfo.indexOf('person/popular') !== -1 || (json.title && json.params && json.params.module)) {
-                                    // Check for person icon heuristic if we want to be sure
-                                    if (json.icon_img && json.icon_img.indexOf('profile_path') === -1) {
-                                        if (!sectionKey) {
-                                            sectionKey = 'persons';
-                                        }
-                                    }
-                                }
-
-                                if (urlInfo.indexOf('discover/movie') !== -1 || urlInfo.indexOf('discover/tv') !== -1) {
-                                    if (urlInfo.indexOf('with_keywords') !== -1) {
-                                        sectionKey = 'keywords';
-                                    }
-                                    if (urlInfo.indexOf('with_genres') !== -1) {
-                                        sectionKey = 'genres';
-                                    }
-                                }
-                                if (urlInfo.indexOf('genre=') !== -1 && !sectionKey) {
-                                    sectionKey = 'genres';
-                                }
-
-                                if (sectionKey) {
-                                    var show = Lampa.Storage.get('cub_dash_show_' + sectionKey, true);
-                                    var style = Lampa.Storage.get('cub_dash_style_' + sectionKey, 'std');
-
-                                    if (!show) {
-                                        return call(null);
-                                    }
-
-                                    applyStyle(json, style);
-                                }
-
-                                call(json);
-                            });
-                        };
-                    });
-
-                    for (var i = 0; i < callbacks.length; i++) {
-                        callbacks[i] = wrappedCallbacks[i];
-                    }
                 }
-
                 return originalCall.apply(this, arguments);
             };
+        };
+
+        // Monkey Patch API for Dynamic Rows
+        this.monkeyPatchApi = function () {
+            // Patch partKeyword to tag keyword rows
+            if (Lampa.Api.partKeyword) {
+                var originalPartKeyword = Lampa.Api.partKeyword;
+                Lampa.Api.partKeyword = function () {
+                    var func = originalPartKeyword.apply(this, arguments);
+                    if (typeof func === 'function') {
+                        func._cub_settings_type = 'keywords';
+                    }
+                    return func;
+                };
+            }
+
+            // Patch partNext to intercept execution of all rows
+            if (Lampa.Api.partNext) {
+                var originalPartNext = Lampa.Api.partNext;
+                Lampa.Api.partNext = function (parts, limit, onLoaded, onEmpty) {
+                    // Wrap all unwrapped functions in parts
+                    for (var i = 0; i < parts.length; i++) {
+                        if (typeof parts[i] === 'function' && !parts[i]._cub_wrapped) {
+                            parts[i] = _this.wrapRowGenerator(parts[i]);
+                        }
+                    }
+                    return originalPartNext.apply(this, arguments);
+                };
+            }
+        };
+
+        this.wrapRowGenerator = function (originalFunc) {
+            var wrapper = function (call) {
+                originalFunc(function (json) {
+                    // Intecept Result
+                    if (!json) return call(json);
+
+                    var urlInfo = json.url || '';
+                    var sectionKey = null;
+
+                    // 1. Tag-based detection (from patched partKeyword)
+                    if (originalFunc._cub_settings_type) {
+                        sectionKey = originalFunc._cub_settings_type;
+                    }
+
+                    // 2. URL-based detection
+                    if (!sectionKey) {
+                        for (var key in sections) {
+                            if (urlInfo.indexOf(key) !== -1) {
+                                sectionKey = key;
+                                break;
+                            }
+                        }
+                        if (urlInfo.indexOf('sort=now') !== -1 && urlInfo.indexOf('sort=now_playing') === -1) sectionKey = 'now';
+                        if (urlInfo.indexOf('collections/') !== -1 && urlInfo.indexOf('collections/list') === -1) sectionKey = 'collections/list';
+                        if (urlInfo.indexOf('genre=') !== -1) sectionKey = 'genres';
+
+                        // Keywords might have url if not tagged (backup)
+                        if (urlInfo.indexOf('discover/movie') !== -1 || urlInfo.indexOf('discover/tv') !== -1) {
+                            if (urlInfo.indexOf('with_keywords') !== -1) sectionKey = 'keywords';
+                            if (urlInfo.indexOf('with_genres') !== -1) sectionKey = 'genres';
+                        }
+                    }
+
+                    // 3. Heuristic detection (Persons)
+                    // Persons row usually has no URL, but has icon_img.
+                    if (!sectionKey && !urlInfo && json.icon_img && json.results && json.results.length > 0) {
+                        // Double check it's not our injected row
+                        if (json.url !== 'injected_book' && json.url !== 'injected_history') {
+                            sectionKey = 'persons';
+                        }
+                    }
+
+                    if (sectionKey) {
+                        var show = Lampa.Storage.get('cub_dash_show_' + sectionKey, true);
+                        var style = Lampa.Storage.get('cub_dash_style_' + sectionKey, 'std');
+
+                        if (!show) {
+                            return call(null);
+                        }
+                        applyStyle(json, style);
+                    }
+
+                    call(json);
+                });
+            };
+            wrapper._cub_wrapped = true;
+            wrapper._cub_settings_type = originalFunc._cub_settings_type; // Preserve tag
+            return wrapper;
         };
 
         function createInjectedRow(type) {
@@ -296,7 +316,13 @@
 
                 call(json);
             };
-            func.isInjectedRow = true;
+            func._cub_wrapped = true; // Mark as wrapped so partNext doesn't re-wrap logic (though wrapRowGenerator handles logic too)
+            // But wait, createInjectedRow ALREADY applies style and checks existence.
+            // partNext wrapper will wrap it again if I don't mark it.
+            // My wrapper checks for sectionKey.
+            // If I let it wrap, it won't find sectionKey for 'injected_...' unless I add it to heuristic or map.
+            // But I handled injected logic inside the createInjectedRow function (it only exists if enabled).
+            // So I should mark it as wrapped to avoid double processing or accidental hiding.
             return func;
         }
 
@@ -344,4 +370,3 @@
     }
 
 })();
-

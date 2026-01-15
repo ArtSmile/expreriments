@@ -1,5 +1,4 @@
 (function () {
-  //BDVBurik 2024 (Final Adjusted Version)
   "use strict";
 
   async function titleOrigin(card) {
